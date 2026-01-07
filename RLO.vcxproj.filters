@@ -1,0 +1,86 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Header Files">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Source Files\net">
+      <UniqueIdentifier>{4be36f14-e9c3-4316-bf1f-a1177c6731bc}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\game">
+      <UniqueIdentifier>{e9cf7f91-13bf-45f6-8f0f-95a8931338dd}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\net">
+      <UniqueIdentifier>{d9d7485e-c28f-4f45-88b2-b0e2bfc4dbf6}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Header Files\game">
+      <UniqueIdentifier>{f162249d-1948-48a4-8b8a-323764a8bc54}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Asset Files">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Asset Files\fonts">
+      <UniqueIdentifier>{7fdc224a-0712-4425-91af-0a9a9ba7465c}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net\GameClient.cpp">
+      <Filter>Source Files\net</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net\GameHost.cpp">
+      <Filter>Source Files\net</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net\LobbyClient.cpp">
+      <Filter>Source Files\net</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net\LobbyServer.cpp">
+      <Filter>Source Files\net</Filter>
+    </ClCompile>
+    <ClCompile Include="src\game\World.cpp">
+      <Filter>Source Files\game</Filter>
+    </ClCompile>
+    <ClCompile Include="src\net\NetCommon.cpp">
+      <Filter>Source Files\net</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\game\World.hpp">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\GameClient.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\GameHost.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\GameProtocol.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\LobbyClient.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\LobbyProtocol.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\LobbyServer.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+    <ClInclude Include="src\net\NetCommon.hpp">
+      <Filter>Header Files\net</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <Font Include="assets\fonts\bubbly.ttf">
+      <Filter>Asset Files\fonts</Filter>
+    </Font>
+  </ItemGroup>
+</Project>

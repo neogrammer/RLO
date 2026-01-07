@@ -1,0 +1,604 @@
+#include <SFML/Graphics.hpp>
+#include <iostream>
+#include <string>
+#include <vector>
+#include <thread>
+#include <chrono>
+
+#include "net/NetCommon.hpp"
+#include "net/LobbyServer.hpp"
+#include "net/LobbyClient.hpp"
+#include "net/GameHost.hpp"
+#include "net/GameClient.hpp"
+#include <steam/isteamnetworkingutils.h>
+
+struct Args {
+    bool lobbyServer = false;
+    uint16_t lobbyPort = 27010;
+
+    bool host = false;
+    uint16_t gamePort = 27020;
+
+    bool client = false;
+    bool browseOnly = false;
+    int pickIndex = 0;
+
+    std::string lobbyAddr;     // e.g. "1.2.3.4:27010"
+    std::string name = "Run #1";
+};
+
+static Args parseArgs(int argc, char** argv) {
+    Args a;
+    for (int i = 1; i < argc; ++i) {
+        std::string s = argv[i];
+
+        if (s == "--lobby-server" && i + 1 < argc) { a.lobbyServer = true; a.lobbyPort = (uint16_t)std::stoi(argv[++i]); }
+        else if (s == "--host" && i + 1 < argc) { a.host = true; a.gamePort = (uint16_t)std::stoi(argv[++i]); }
+        else if (s == "--client") { a.client = true; }
+        else if (s == "--browse") { a.browseOnly = true; }
+        else if (s == "--pick" && i + 1 < argc) { a.pickIndex = std::stoi(argv[++i]); }
+        else if (s == "--lobby" && i + 1 < argc) { a.lobbyAddr = argv[++i]; }
+        else if (s == "--name" && i + 1 < argc) { a.name = argv[++i]; }
+    }
+    return a;
+}
+
+struct App {
+    NetRuntime rt;
+
+    LobbyServer lobbyServer;
+    LobbyClient lobbyClient;
+    GameHost gameHost;
+    GameClient gameClient;
+
+    bool hasLobbyServer = false;
+    bool hasLobbyClient = false;
+    bool hasGameHost = false;
+    bool hasGameClient = false;
+
+    // Callback router
+    static App* self;
+    static void routeConnStatus(SteamNetConnectionStatusChangedCallback_t* info) {
+        if (!self) return;
+
+        // Listen-socket-targeted callbacks
+        if (self->hasLobbyServer && info->m_info.m_hListenSocket == self->lobbyServerListen()) {
+            self->lobbyServer.onConnStatusChanged(info);
+            return;
+        }
+        if (self->hasGameHost && info->m_info.m_hListenSocket == self->gameHostListen()) {
+            self->gameHost.onConnStatusChanged(info);
+            return;
+        }
+
+        // Connection-targeted callbacks
+        if (self->hasLobbyClient && info->m_hConn == self->lobbyClient.conn()) {
+            self->lobbyClient.onConnStatusChanged(info);
+            return;
+        }
+        if (self->hasGameClient && info->m_hConn == self->gameClient.conn()) {
+            self->gameClient.onConnStatusChanged(info);
+            return;
+        }
+    }
+
+    HSteamListenSocket lobbyServerListen() const { return hasLobbyServer ? lobbyServerListenSock : k_HSteamListenSocket_Invalid; }
+    HSteamListenSocket gameHostListen() const { return hasGameHost ? gameHost.listenSocket() : k_HSteamListenSocket_Invalid; }
+
+    // stash because LobbyServer keeps listen private; we’ll track it here via start success
+    HSteamListenSocket lobbyServerListenSock{ k_HSteamListenSocket_Invalid };
+};
+
+App* App::self = nullptr;
+//
+//
+//static LobbyServer* g_lobby = nullptr;
+//static HSteamListenSocket g_lobbyListen = k_HSteamListenSocket_Invalid;
+//
+//static void Route(SteamNetConnectionStatusChangedCallback_t* info)
+//{
+//    if (!g_lobby) return;
+//    if (info->m_info.m_hListenSocket == g_lobbyListen) {
+//        g_lobby->onConnStatusChanged(info);
+//    }
+//}
+
+
+int main(int argc, char** argv) {
+    const Args args = parseArgs(argc, argv);
+
+    App app;
+    App::self = &app;
+
+    if (!app.rt.init()) return 1;
+    app.rt.setConnStatusRouter(&App::routeConnStatus);
+
+    auto* iface = app.rt.iface();
+
+    // Mode: Lobby server
+    //if (args.lobbyServer) {
+
+    //    uint16_t port = 27010;
+    //    if (argc >= 2) port = (uint16_t)std::stoi(std::string(argv[1]));
+
+    //    NetRuntime rt;
+    //    if (!rt.init()) return 1;
+
+    //    LobbyServer lobby;
+    //    g_lobby = &lobby;
+    //    rt.setConnStatusRouter(&Route);
+
+    //    if (!lobby.start(rt.iface(), port)) {
+    //        std::cerr << "Failed to start lobby server\n";
+    //        return 2;
+    //    }
+
+    //    // requires you add: HSteamListenSocket LobbyServer::listenSocket() const { return m_listen; }
+    //    g_lobbyListen = lobby.listenSocket();
+
+    //    std::cout << "[LobbyServer] Running on UDP " << port << "\n";
+
+    //    while (true) {
+    //        rt.pumpCallbacks();
+    //        lobby.pump();
+    //        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    //    }
+    //   
+    //}
+
+    if (args.lobbyServer)
+    {
+        app.hasLobbyServer = true;
+
+        if (!app.lobbyServer.start(iface, args.lobbyPort)) {
+            std::cerr << "Failed to start lobby server\n";
+            app.rt.shutdown();
+            return 2;
+        }
+
+        app.lobbyServerListenSock = app.lobbyServer.listenSocket();
+
+        std::cout << "[LobbyServer] Running on UDP " << args.lobbyPort << "\n";
+
+        for (;;)
+        {
+            app.rt.pumpCallbacks();
+            app.lobbyServer.pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    
+
+    // Mode: Host (with lobby announce)
+    if (args.host) {
+        app.hasGameHost = true;
+        const uint32_t seed = 0xC0FFEEu; // placeholder; later: random per run
+        if (!app.gameHost.start(iface, args.gamePort, seed)) return 4;
+
+        // Optional: announce to lobby
+        if (!args.lobbyAddr.empty()) {
+            app.hasLobbyClient = true;
+            if (!app.lobbyClient.connect(iface, args.lobbyAddr, LobbyClient::Role::Announcer)) return 5;
+            app.lobbyClient.setAnnounceInfo(args.gamePort, 3, seed, args.name);
+        }
+
+        sf::RenderWindow window(sf::VideoMode({ 1280U, 720U }, 32U), "Host");
+        window.setFramerateLimit(60);
+
+        sf::CircleShape circles[3];
+        for (int i = 0; i < 3; ++i) {
+            circles[i] = sf::CircleShape(18.f);
+            circles[i].setOrigin({ 18.f, 18.f });
+        }
+
+        float hbAccum = 0.f;
+
+        sf::Clock clock;
+        while (window.isOpen()) 
+        {
+            
+            while (const std::optional event = window.pollEvent())
+                if (event->is<sf::Event::Closed>())
+                    window.close();
+
+            const float dt = clock.restart().asSeconds();
+
+            int8_t mx = 0, my = 0;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) mx = -1;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) mx = +1;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) my = -1;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) my = +1;
+
+            app.rt.pumpCallbacks();
+
+            app.gameHost.pumpNetwork();
+            app.gameHost.updateSim(dt, mx, my);
+
+            if (app.hasLobbyClient) {
+
+
+                app.lobbyClient.pump();
+                hbAccum += dt;
+                if (hbAccum >= 1.0f) {
+                    hbAccum = 0.f;
+                    //app.lobbyClient.sendHeartbeat(app.gameHost.curPlayers());
+                    // Count host + connected clients
+                    constexpr uint16_t kMaxPlayers = 3; // keep in sync with setAnnounceInfo(..., 3, ...)
+                   // const uint16_t totalPlayers = (uint16_t)std::min<int>(kMaxPlayers, (int)app.gameHost.curPlayers());
+                    const uint16_t totalPlayers =
+                        (uint16_t)std::clamp((int)app.gameHost.curPlayers() + 1, 1, (int)kMaxPlayers);
+                    app.lobbyClient.sendHeartbeat(totalPlayers);
+                }
+            }
+
+            window.clear(sf::Color(20, 20, 26));
+
+            const auto* st = app.gameHost.states();
+            for (int i = 0; i < 3; ++i) {
+                circles[i].setPosition({ st[i].x, st[i].y });
+                window.draw(circles[i]);
+            }
+
+            window.display();
+        }
+
+        app.gameHost.stop();
+        app.lobbyClient.disconnect();
+        app.rt.shutdown();
+        return 0;
+    }
+
+    // Mode: Client (browse lobby, pick session, connect)
+   // Mode: Client (SFML lobby browser -> click to join -> in-game)
+    if (args.client) {
+        if (args.lobbyAddr.empty()) {
+            std::cerr << "Client mode requires --lobby <ip:port>\n";
+            return 6;
+        }
+
+        app.hasLobbyClient = true;
+        if (!app.lobbyClient.connect(iface, args.lobbyAddr, LobbyClient::Role::Browser)) return 7;
+
+        // One window: lobby screen then gameplay
+        sf::RenderWindow window(sf::VideoMode({ 1280U, 720U }, 32U), "RLO - Lobby");
+        window.setFramerateLimit(60);
+
+        // Font (you must provide one file; pick any .ttf)
+        // Put it next to your .exe or in a relative folder you control.
+        ///*sf::Font font;
+        //const bool hasFont = font.openFromFile("assets/DejaVuSans.ttf") || font.openFromFile("DejaVuSans.ttf");*/
+
+        sf::Font font;
+
+        auto tryFont = [&](const char* p) -> bool {
+            if (font.openFromFile(p)) { std::cout << "[UI] Loaded font: " << p << "\n"; return true; }
+            return false;
+            };
+
+        // Try a few likely working directories
+        const bool hasFont =
+            tryFont("assets/fonts/bubbly.ttf") ||
+            tryFont("../assets/fonts/bubbly.ttf") ||
+            tryFont("../../assets/fonts/bubbly.ttf") ||
+            tryFont("bubbly.ttf");
+
+        auto mkText = [&](const std::string& s, unsigned size, sf::Vector2f pos) {
+            sf::Text t(font);
+            t.setString(s);
+            t.setCharacterSize(size);
+            t.setPosition(pos);
+            return t;
+            };
+
+        auto entryAddrStr = [](const lobby::SessionEntry& e) -> std::string {
+            SteamNetworkingIPAddr a;
+            a.Clear();
+            a.SetIPv4(e.ipv4_host_order, e.gamePort);
+            char buf[SteamNetworkingIPAddr::k_cchMaxString]{};
+            a.ToString(buf, sizeof(buf), true);
+            return std::string(buf);
+            };
+
+        enum class Phase { LobbyBrowse, InGame };
+        Phase phase = Phase::LobbyBrowse;
+
+        std::vector<lobby::SessionEntry> list;
+        bool haveList = false;
+
+        // Lobby UI layout
+        const float left = 60.f;
+        const float top = 90.f;
+        const float rowH = 56.f;
+        const float rowW = 1160.f;
+
+        sf::RectangleShape rowRect({ rowW, rowH });
+        rowRect.setOutlineThickness(2.f);
+
+        sf::CircleShape circles[3];
+        for (int i = 0; i < 3; ++i) {
+            circles[i] = sf::CircleShape(18.f);
+            circles[i].setOrigin({ 18.f, 18.f });
+        }
+
+        game::Snap snap{};
+        bool hasSnap = false;
+
+        float listReqAccum = 0.f;
+
+        sf::Clock clock;
+
+        int selectedIdx = -1;
+
+        sf::Clock uiClock;
+        float lastClickAt = -1000.f;
+        int lastClickIdx = -1;
+
+        auto tryJoinIndex = [&](int idx)
+            {
+                if (idx < 0 || idx >= (int)list.size()) return;
+
+                const auto& e = list[idx];
+                const bool open =
+                    (e.state == lobby::SessionState::Open) &&
+                    (e.curPlayers < e.maxPlayers);
+
+                if (!open) return;
+
+                const std::string hostStr = entryAddrStr(e);
+
+                app.hasGameClient = true;
+                if (!app.gameClient.connect(iface, hostStr.c_str())) {
+                    std::cerr << "Failed to connect to host: " << hostStr << "\n";
+                    app.hasGameClient = false;
+                    return;
+                }
+
+                std::cout << "[Client] Joining " << hostStr << " name=\"" << e.name << "\"\n";
+                window.setTitle("RLO - Client");
+                phase = Phase::InGame;
+
+                // Optional: drop lobby connection once we join
+                app.lobbyClient.disconnect();
+                app.hasLobbyClient = false;
+            };
+
+
+        while (window.isOpen()) {
+            while (const std::optional ev = window.pollEvent()) {
+                if (ev->is<sf::Event::Closed>()) window.close();
+
+                if (phase == Phase::LobbyBrowse) {
+                    if (ev->is<sf::Event::KeyPressed>()) {
+                        if (const auto* kp = ev->getIf<sf::Event::KeyPressed>()) {
+                            if (kp->code == sf::Keyboard::Key::Escape) window.close();
+                            if (kp->code == sf::Keyboard::Key::R) {
+                                if (app.lobbyClient.isConnected())
+                                    app.lobbyClient.requestList();
+                            }
+                        }
+                    }
+
+                    //if (ev->is<sf::Event::MouseButtonPressed>()) {
+                    //    if (const auto* mb = ev->getIf<sf::Event::MouseButtonPressed>()) {
+                    //        if (mb->button == sf::Mouse::Button::Left && haveList) {
+                    //            const sf::Vector2f mp = window.mapPixelToCoords(mb->position);
+
+                    //            // Figure out which row was clicked
+                    //            const float relY = mp.y - top;
+                    //            if (mp.x >= left && mp.x <= left + rowW && relY >= 0.f) {
+                    //                const int idx = (int)(relY / rowH);
+                    //                if (idx >= 0 && idx < (int)list.size()) {
+                    //                    const auto& e = list[idx];
+                    //                    const bool open =
+                    //                        (e.state == lobby::SessionState::Open) &&
+                    //                        (e.curPlayers < e.maxPlayers);
+
+                    //                    if (open) {
+                    //                        // Connect to selected host
+                    //                        const std::string hostStr = entryAddrStr(e);
+
+                    //                        app.hasGameClient = true;
+                    //                        if (!app.gameClient.connect(iface, hostStr.c_str())) {
+                    //                            std::cerr << "Failed to connect to host: " << hostStr << "\n";
+                    //                            app.hasGameClient = false;
+                    //                        }
+                    //                        else {
+                    //                            std::cout << "[Client] Joining " << hostStr << " name=\"" << e.name << "\"\n";
+                    //                            window.setTitle("RLO - Client");
+                    //                            phase = Phase::InGame;
+
+                    //                            // Optional: drop lobby connection once we join
+                    //                            app.lobbyClient.disconnect();
+                    //                            app.hasLobbyClient = false;
+                    //                        }
+                    //                    }
+                    //                }
+                    //            }
+                    //        }
+                    //    }
+                    //}
+                    if (ev->is<sf::Event::MouseButtonPressed>()) {
+                        if (const auto* mb = ev->getIf<sf::Event::MouseButtonPressed>()) {
+                            if (mb->button == sf::Mouse::Button::Left && haveList) {
+
+                                const sf::Vector2f mp = window.mapPixelToCoords(mb->position);
+
+                                const float relY = mp.y - top;
+                                if (mp.x >= left && mp.x <= left + rowW && relY >= 0.f) {
+                                    const int idx = (int)(relY / rowH);
+                                    if (idx >= 0 && idx < (int)list.size()) {
+
+                                        // --browse means "never join", only view/select
+                                        if (args.browseOnly) {
+                                            selectedIdx = idx;
+                                            break;
+                                        }
+
+                                        // First click selects, second click joins (double-click style)
+                                        const float now = uiClock.getElapsedTime().asSeconds();
+                                        const bool sameRow = (idx == selectedIdx);
+                                        const bool isDouble = (idx == lastClickIdx) && ((now - lastClickAt) < 0.35f);
+
+                                        selectedIdx = idx;
+
+                                        if (sameRow && isDouble) {
+                                            tryJoinIndex(idx);
+                                        }
+
+                                        lastClickIdx = idx;
+                                        lastClickAt = now;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (const auto* kp = ev->getIf<sf::Event::KeyPressed>())
+                    {
+                        if (kp->code == sf::Keyboard::Key::Enter)
+                        {
+                            if (!args.browseOnly) {
+                                tryJoinIndex(selectedIdx);
+                            }
+                        }
+                    }
+                }
+            }
+
+            const float dt = clock.restart().asSeconds();
+
+            // Always pump callbacks
+            app.rt.pumpCallbacks();
+
+            if (phase == Phase::LobbyBrowse) {
+                // Keep lobby connection alive and request list periodically
+                app.lobbyClient.pump();
+
+                listReqAccum += dt;
+                if (app.lobbyClient.isConnected() && listReqAccum >= 0.5f) {
+                    listReqAccum = 0.f;
+                    app.lobbyClient.requestList();
+                }
+
+                std::vector<lobby::SessionEntry> tmp;
+                if (app.lobbyClient.popLatestList(tmp)) {
+                    list = std::move(tmp);
+                    haveList = true;
+                }
+
+                // Render lobby list
+                window.clear(sf::Color(16, 16, 22));
+
+                if (hasFont) {
+                    window.draw(mkText("Lobby (click an OPEN game to join)    R=Refresh   Esc=Quit", 20, { left, 30.f }));
+                    window.draw(mkText(("Lobby: " + args.lobbyAddr), 16, { left, 55.f }));
+                }
+
+                // Hover detection
+                int hoverIdx = -1;
+                if (haveList) {
+                    const sf::Vector2f mp = window.mapPixelToCoords(sf::Mouse::getPosition(window));
+                    const float relY = mp.y - top;
+                    if (mp.x >= left && mp.x <= left + rowW && relY >= 0.f) {
+                        const int idx = (int)(relY / rowH);
+                        if (idx >= 0 && idx < (int)list.size()) hoverIdx = idx;
+                    }
+                }
+
+
+               
+                if (!haveList) {
+                    if (hasFont)
+                    {
+                        window.draw(mkText("Waiting for lobby list...", 18, { left, top }));
+                    }
+                }
+                else if (list.empty()) {
+                    if (hasFont)
+                    {
+                        window.draw(mkText("No sessions yet. Start a host.", 18, { left, top }));
+                    }
+                }
+                else {
+                    for (int i = 0; i < (int)list.size(); ++i) {
+                        const auto& e = list[i];
+
+                        const bool open = (e.state == lobby::SessionState::Open) && (e.curPlayers < e.maxPlayers);
+                        const bool full = (e.state == lobby::SessionState::Full) || (e.curPlayers >= e.maxPlayers);
+                        const bool mig = (e.state == lobby::SessionState::Migrating);
+
+                        rowRect.setPosition({ left, top + i * rowH });
+
+
+                        // color coding
+                        if (mig) rowRect.setFillColor(sf::Color(70, 60, 25));
+                        else if (full) rowRect.setFillColor(sf::Color(50, 50, 55));
+                        else rowRect.setFillColor(sf::Color(25, 70, 35)); // open
+
+                        // hover highlight (only for clickable rows)
+                        if (i == hoverIdx && open) rowRect.setFillColor(sf::Color(35, 90, 55));
+
+                        //rowRect.setOutlineColor(open ? sf::Color(120, 180, 140) : sf::Color(90, 90, 95));
+                       
+
+                        if (i == selectedIdx) {
+                            rowRect.setOutlineColor(sf::Color(220, 220, 255));
+                            rowRect.setOutlineThickness(3.f);
+                        }
+                        else {
+                            rowRect.setOutlineThickness(2.f);
+                        }
+                        window.draw(rowRect);
+
+                        if (hasFont) {
+                            const std::string addr = entryAddrStr(e);
+                            const std::string line1 = std::string(e.name) + "    " +
+                                std::to_string((int)e.curPlayers) + "/" + std::to_string((int)e.maxPlayers) +
+                                (mig ? "   [MIGRATING]" : (full ? "   [FULL]" : "   [OPEN]"));
+
+                            window.draw(mkText(line1, 18, { left + 14.f, top + i * rowH + 8.f }));
+                            window.draw(mkText(addr, 14, { left + 14.f, top + i * rowH + 30.f }));
+                        }
+                    }
+                }
+
+                window.display();
+                continue;
+            }
+
+            // Phase: InGame
+            int8_t mx = 0, my = 0;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) mx = -1;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::D)) mx = +1;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::W)) my = -1;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::S)) my = +1;
+
+            app.gameClient.pumpNetwork();
+            app.gameClient.sendInput(mx, my);
+
+            game::Snap s2{};
+            if (app.gameClient.popLatestSnap(s2)) {
+                snap = s2;
+                hasSnap = true;
+            }
+
+            window.clear(sf::Color(20, 20, 26));
+
+            if (hasSnap) {
+                for (int i = 0; i < (int)snap.count && i < 3; ++i) {
+                    const auto& ps = snap.players[i];
+                    circles[ps.id].setPosition({ ps.x, ps.y });
+                    window.draw(circles[ps.id]);
+                }
+            }
+
+            window.display();
+        }
+
+        // cleanup
+        if (app.hasGameClient) app.gameClient.disconnect();
+        if (app.hasLobbyClient) app.lobbyClient.disconnect();
+        app.rt.shutdown();
+        return 0;
+    }
+}
