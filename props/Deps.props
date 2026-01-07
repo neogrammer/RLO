@@ -1,0 +1,22 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <!-- Change these if you want -->
+    <VcpkgRoot Condition="'$(VcpkgRoot)'==''">$(SolutionDir)external\vcpkg\</VcpkgRoot>
+    <VcpkgTriplet Condition="'$(VcpkgTriplet)'==''">x64-windows</VcpkgTriplet>
+  </PropertyGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <AdditionalIncludeDirectories>
+        $(VcpkgRoot)installed\$(VcpkgTriplet)\include;
+        %(AdditionalIncludeDirectories)
+      </AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <AdditionalLibraryDirectories>
+        $(VcpkgRoot)installed\$(VcpkgTriplet)\lib;
+        %(AdditionalLibraryDirectories)
+      </AdditionalLibraryDirectories>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>
