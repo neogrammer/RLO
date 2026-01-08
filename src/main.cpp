@@ -226,7 +226,7 @@ int main(int argc, char** argv) {
                     constexpr uint16_t kMaxPlayers = 3; // keep in sync with setAnnounceInfo(..., 3, ...)
                    // const uint16_t totalPlayers = (uint16_t)std::min<int>(kMaxPlayers, (int)app.gameHost.curPlayers());
                     const uint16_t totalPlayers =
-                        (uint16_t)std::clamp((int)app.gameHost.curPlayers() + 1, 1, (int)kMaxPlayers);
+                        (uint16_t)std::clamp((int)app.gameHost.curPlayers(), 1, (int)kMaxPlayers);
                     app.lobbyClient.sendHeartbeat(totalPlayers);
                 }
             }
