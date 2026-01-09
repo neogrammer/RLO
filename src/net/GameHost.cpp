@@ -233,6 +233,17 @@ void GameHost::sendStartGame(HSteamNetConnection to) {
     m_iface->SendMessageToConnection(to, &m, sizeof(m), k_nSteamNetworkingSend_Reliable, nullptr);
 }
 
+void GameHost::restoreState(const game::PlayerState* states, uint32_t tick) {
+    if (!states) return;
+
+    for (uint8_t i = 0; i < game::kMaxPlayers; ++i) {
+        m_state[i] = states[i];
+    }
+    m_serverTick = tick;
+
+    std::cout << "[Host] State restored at tick " << tick << "\n";
+}
+
 void GameHost::startGame() {
     if (m_gameStarted) return;
     m_gameStarted = true;

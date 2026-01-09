@@ -4,6 +4,7 @@
 #include <vector>
 #include <thread>
 #include <chrono>
+#include <random>
 
 #include "net/NetCommon.hpp"
 #include "net/LobbyServer.hpp"
@@ -55,6 +56,7 @@ struct App {
     bool hasLobbyClient = false;
     bool hasGameHost = false;
     bool hasGameClient = false;
+
 
     // Callback router
     static App* self;
@@ -146,6 +148,19 @@ int main(int argc, char** argv) {
     //   
     //}
 
+
+    // Migration state
+    uint64_t savedSessionKey = 0;
+    std::string savedSessionName;
+    uint32_t savedWorldSeed = 0;
+    game::Snap savedGameState{};
+    sf::Clock migrationTimer;
+    sf::Clock reconnectTimer;
+    int migrationDelayMs = 0;
+    int reconnectAttempts = 0;
+    bool isMigratedHost = false;
+    bool showMigrationFailedDialog = false;
+
     if (args.lobbyServer)
     {
         app.hasLobbyServer = true;
@@ -167,7 +182,7 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
     }
-    
+
 
     // Mode: Host (with lobby announce)
     if (args.host) {
@@ -222,9 +237,9 @@ int main(int argc, char** argv) {
         float hbAccum = 0.f;
 
         sf::Clock clock;
-        while (window.isOpen()) 
+        while (window.isOpen())
         {
-            
+
             while (const std::optional event = window.pollEvent())
             {
                 if (event->is<sf::Event::Closed>())
@@ -263,7 +278,7 @@ int main(int argc, char** argv) {
                     //app.lobbyClient.sendHeartbeat(app.gameHost.curPlayers());
                     // Count host + connected clients
                     constexpr uint16_t kMaxPlayers = 3; // keep in sync with setAnnounceInfo(..., 3, ...)
-                   // const uint16_t totalPlayers = (uint16_t)std::min<int>(kMaxPlayers, (int)app.gameHost.curPlayers());
+                    // const uint16_t totalPlayers = (uint16_t)std::min<int>(kMaxPlayers, (int)app.gameHost.curPlayers());
                     const uint16_t totalPlayers =
                         (uint16_t)std::clamp((int)app.gameHost.curPlayers(), 1, (int)kMaxPlayers);
                     app.lobbyClient.sendHeartbeat(totalPlayers);
@@ -339,7 +354,23 @@ int main(int argc, char** argv) {
             tryFont("../../assets/fonts/bubbly.ttf") ||
             tryFont("bubbly.ttf");
 
-      
+        bool showMigrationFailedDialog = false;
+        sf::RectangleShape darkOverlay({ 1280.f, 720.f });
+        sf::RectangleShape dialogBox({ 600.f, 300.f });
+        sf::RectangleShape okButton({ 120.f, 40.f });
+        bool okButtonClicked = false;
+
+
+        darkOverlay.setFillColor(sf::Color(0, 0, 0, 180));
+        dialogBox.setPosition({ 340.f, 210.f });
+        dialogBox.setFillColor(sf::Color(40, 40, 50));
+        dialogBox.setOutlineColor(sf::Color(100, 100, 120));
+        dialogBox.setOutlineThickness(3.f);
+
+        okButton.setPosition({ 580.f, 440.f });
+        okButton.setFillColor(sf::Color(60, 120, 60));
+        okButton.setOutlineColor(sf::Color(120, 180, 120));
+        okButton.setOutlineThickness(2.f);
 
         auto mkText = [&](const std::string& s, unsigned size, sf::Vector2f pos) {
             sf::Text t(font);
@@ -358,7 +389,7 @@ int main(int argc, char** argv) {
             return std::string(buf);
             };
 
-        enum class Phase { LobbyBrowse, WaitingForStart, InGame };
+        enum class Phase { LobbyBrowse, WaitingForStart, InGame, MigrationAttempt, MigrationReconnect };
         Phase phase = Phase::LobbyBrowse;
 
         std::string joinedHostStr;
@@ -368,7 +399,7 @@ int main(int argc, char** argv) {
         std::vector<lobby::SessionEntry> list;
         bool haveList = false;
 
-       
+
 
         // Lobby UI layout
         const float left = 60.f;
@@ -479,6 +510,14 @@ int main(int argc, char** argv) {
                 {
                     if (const auto* mb = ev->getIf<sf::Event::MouseButtonPressed>())
                     {
+
+                        if (showMigrationFailedDialog && mb->button == sf::Mouse::Button::Left) {
+                            sf::Vector2f mp = window.mapPixelToCoords(mb->position);
+                            if (okButton.getGlobalBounds().contains(mp)) {
+                                showMigrationFailedDialog = false;
+                                phase = Phase::LobbyBrowse;
+                            }
+                        }
                         if (mb->button == sf::Mouse::Button::Left && haveList)
                         {
                             const sf::Vector2f mp = window.mapPixelToCoords(mb->position);
@@ -565,6 +604,7 @@ int main(int argc, char** argv) {
                 }
             }
 
+            if (phase != Phase::InGame) {
                 // Render lobby list
                 window.clear(sf::Color(16, 16, 22));
 
@@ -585,7 +625,7 @@ int main(int argc, char** argv) {
                 }
 
 
-               
+
                 if (!haveList) {
                     if (hasFont)
                     {
@@ -618,7 +658,7 @@ int main(int argc, char** argv) {
                         if (i == hoverIdx && open) rowRect.setFillColor(sf::Color(35, 90, 55));
 
                         //rowRect.setOutlineColor(open ? sf::Color(120, 180, 140) : sf::Color(90, 90, 95));
-                       
+
 
                         if (i == selectedIdx) {
                             rowRect.setOutlineColor(sf::Color(220, 220, 255));
@@ -657,6 +697,194 @@ int main(int argc, char** argv) {
                 continue;
             }
 
+            if (phase == Phase::InGame && app.hasGameClient && app.gameClient.hostDisconnected()) {
+                app.gameClient.clearHostDisconnected();
+
+                std::cout << "[Client] Host disconnected! Attempting migration...\n";
+
+                // Reconnect to lobby if we dropped it during game start
+                if (!app.hasLobbyClient) {
+                    app.hasLobbyClient = true;
+                    if (!app.lobbyClient.connect(iface, args.lobbyAddr, LobbyClient::Role::Browser)) {
+                        std::cerr << "[Migration] Failed to reconnect to lobby for migration\n";
+                    }
+                }
+
+                // Preserve game state
+                game::Snap snap{};
+                if (app.gameClient.popLatestSnap(snap)) {
+                    savedGameState = snap;
+                }
+                savedSessionName = joinedSessionName;
+                savedWorldSeed = app.gameClient.worldSeed();
+
+                // Start random delay (0-1000ms) to avoid simultaneous claims
+                std::mt19937 rng{ std::random_device{}() };
+                std::uniform_int_distribution<int> dist(0, 1000);
+                migrationDelayMs = dist(rng);
+                migrationTimer.restart();
+
+                phase = Phase::MigrationAttempt;
+                break;
+            }
+
+            if (phase == Phase::MigrationAttempt && migrationTimer.getElapsedTime().asMilliseconds() >= migrationDelayMs) {
+
+                // Try to start hosting on a dynamic port (OS assigns)
+                uint16_t dynamicPort = 0; // 0 = OS picks available port
+
+                if (app.gameHost.start(iface, dynamicPort, savedWorldSeed)) {
+
+                    // Successfully hosting! Get the actual port assigned
+                    uint16_t actualPort = app.gameHost.port();
+
+                    std::cout << "[Migration] Became host on port " << actualPort << "\n";
+
+                    app.hasGameHost = true;
+                    app.hasGameClient = false;
+
+                    // Send Claim to lobby (using saved sessionKey from original host)
+                    if (app.hasLobbyClient) {
+                        app.lobbyClient.setSessionKey(savedSessionKey);
+                        app.lobbyClient.setAnnounceInfo(savedSessionKey, actualPort, 3, savedWorldSeed, savedSessionName);
+                        app.lobbyClient.sendClaimNow();
+                    }
+
+                    // Restore game state to new host
+                    app.gameHost.restoreState(savedGameState.players, savedGameState.serverTick);
+
+                    phase = Phase::InGame;
+                    isMigratedHost = true;
+
+                    std::cout << "[Migration] Successfully claimed session. Now hosting.\n";
+
+                }
+                else {
+                    // Failed to host (likely no port forwarding)
+                    std::cout << "[Migration] Failed to become host. Checking for new host...\n";
+                    phase = Phase::MigrationReconnect;
+                    reconnectTimer.restart();
+                }
+            }
+
+            if (phase == Phase::MigrationReconnect) {
+
+                // Poll lobby every 500ms for updated session info
+                if (reconnectTimer.getElapsedTime().asSeconds() >= 0.5f) {
+                    reconnectTimer.restart();
+                    reconnectAttempts++;
+
+                    app.lobbyClient.requestList();
+                }
+
+                // Check if our old session now has a new host (state changed from Migrating to Open)
+                std::vector<lobby::SessionEntry> list;
+                if (app.lobbyClient.popLatestList(list)) {
+
+                    for (const auto& e : list) {
+                        if (e.sessionKey == savedSessionKey) {
+
+                            if (e.state == lobby::SessionState::Open || e.state == lobby::SessionState::Full) {
+                                // Session was successfully claimed!
+                                std::cout << "[Migration] Found new host! Reconnecting...\n";
+
+                                std::string newHostAddr = entryAddrStr(e);
+
+                                app.hasGameClient = true;
+                                if (app.gameClient.connect(iface, newHostAddr)) {
+                                    phase = Phase::InGame;
+                                    reconnectAttempts = 0;
+                                    std::cout << "[Migration] Reconnected to new host.\n";
+                                }
+
+                            }
+                            else if (e.state == lobby::SessionState::Migrating) {
+                                // Still migrating, keep waiting
+                                std::cout << "[Migration] Session still migrating... waiting\n";
+                            }
+
+                            break;
+                        }
+                    }
+                }
+
+                // THIS IS WHERE IT GOES - right here before the closing brace
+                // Timeout after 10 attempts (~5 seconds)
+                if (reconnectAttempts >= 10) {
+                    std::cout << "[Migration] Failed. Returning to lobby.\n";
+                    showMigrationFailedDialog = true;
+                    phase = Phase::LobbyBrowse;
+                    window.setTitle("RLO - Lobby");
+
+                    if (app.hasGameClient) {
+                        app.gameClient.disconnect();
+                        app.hasGameClient = false;
+                    }
+
+                    // NEW: If we tried to host but failed, stop hosting
+                    if (app.hasGameHost) {
+                        app.gameHost.stop();
+                        app.hasGameHost = false;
+                    }
+
+                    // CRITICAL: Reconnect to lobby fresh
+    // The lobby connection may be stale after migration attempts
+                    if (app.hasLobbyClient) {
+                        app.lobbyClient.disconnect();
+                        app.hasLobbyClient = false;
+                    }
+
+                    // Reconnect to lobby as Browser
+                    app.hasLobbyClient = true;
+                    if (!app.lobbyClient.connect(iface, args.lobbyAddr, LobbyClient::Role::Browser)) {
+                        std::cerr << "[Migration] Failed to reconnect to lobby\n";
+                    }
+
+                    // Clear ALL state
+                    savedSessionKey = 0;
+                    savedSessionName.clear();
+                    savedWorldSeed = 0;
+                    reconnectAttempts = 0;
+                    isMigratedHost = false;
+
+                    // Clear UI state
+                    joinedHostStr.clear();
+                    joinedSessionName.clear();
+                    joinedIdx = -1;
+                    selectedIdx = -1;
+
+                    // Force immediate list refresh
+                    list.clear();
+                    haveList = false;
+                    listReqAccum = 999.f; // Will trigger immediate request on next frame
+
+                    phase = Phase::LobbyBrowse;
+                    window.setTitle("RLO - Lobby");
+                    showMigrationFailedDialog = true;
+                }
+            }
+
+            if (showMigrationFailedDialog) {
+                // Render modal overlay
+                window.draw(darkOverlay);
+                window.draw(dialogBox);
+
+                if (hasFont) {
+                    window.draw(mkText("Migration Failed", 24, { 400, 250 }));
+                    window.draw(mkText("No players could become the new host.", 16, { 350, 300 }));
+                    window.draw(mkText("To host games, you need:", 16, { 350, 340 }));
+                    window.draw(mkText("1. Port forwarding enabled on your router", 14, { 370, 370 }));
+                    window.draw(mkText("2. Firewall configured to allow UDP traffic", 14, { 370, 395 }));
+                    window.draw(mkText("Press OK to return to lobby", 16, { 380, 450 }));
+                }
+
+                // OK button click detection
+                if (okButtonClicked) {
+                    showMigrationFailedDialog = false;
+                    phase = Phase::LobbyBrowse;
+                }
+            }
+
             // Phase: InGame
             int8_t mx = 0, my = 0;
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::A)) mx = -1;
@@ -683,6 +911,19 @@ int main(int argc, char** argv) {
                 }
             }
 
+            if (showMigrationFailedDialog) {
+                window.draw(darkOverlay);
+                window.draw(dialogBox);
+                window.draw(okButton);
+
+                if (hasFont) {
+                    window.draw(mkText("Migration Failed", 24, { 520.f, 250.f }));
+                    window.draw(mkText("No players could become the new host.", 16, { 420.f, 300.f }));
+                    window.draw(mkText("To host games, you need port forwarding enabled.", 14, { 400.f, 340.f }));
+                    window.draw(mkText("OK", 18, { 625.f, 448.f }));
+                }
+            }
+
             window.display();
         }
 
@@ -692,3 +933,4 @@ int main(int argc, char** argv) {
         app.rt.shutdown();
         return 0;
     }
+}

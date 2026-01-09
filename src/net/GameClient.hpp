@@ -28,7 +28,8 @@ public:
     void sendInput(int8_t mx, int8_t my);
 
     bool popLatestSnap(game::Snap& out);
-
+    bool hostDisconnected() const { return m_hostDisconnected; }
+    void clearHostDisconnected() { m_hostDisconnected = false; }
 private:
     void handleMessage(const void* data, uint32_t size);
 
@@ -36,7 +37,7 @@ private:
     ISteamNetworkingSockets* m_iface{ nullptr };
     HSteamNetConnection m_conn{ k_HSteamNetConnection_Invalid };
     bool m_connected{ false };
-
+    bool m_hostDisconnected{ false };
     uint8_t m_myId{ 255 };
     uint32_t m_clientTick{ 0 };
     bool m_gameStarted{ false };  // NEW

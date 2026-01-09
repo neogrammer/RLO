@@ -32,12 +32,15 @@ public:
     // For rendering on host
     const game::PlayerState* states() const { return m_state; }
 
+    void restoreState(const game::PlayerState* states, uint32_t tick);
+
 private:
     void handleMessage(HSteamNetConnection from, const void* data, uint32_t size);
     void sendWelcome(HSteamNetConnection to, uint8_t assignedId);
     void sendSnap(HSteamNetConnection to, bool reliable);
     void broadcastSnap();
     void sendStartGame(HSteamNetConnection to);
+    
 
     uint8_t pickFreeClientSlot() const;
 

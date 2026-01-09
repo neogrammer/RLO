@@ -52,6 +52,11 @@ void GameClient::onConnStatusChanged(SteamNetConnectionStatusChangedCallback_t* 
 
     if (st == k_ESteamNetworkingConnectionState_ClosedByPeer ||
         st == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
+
+        // Signal to main that host disconnected during gameplay
+        m_hostDisconnected = true;
+
+
         m_connected = false;
         m_myId = 255;
         if (m_conn != k_HSteamNetConnection_Invalid) {
