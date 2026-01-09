@@ -22,6 +22,9 @@ public:
     HSteamNetConnection conn() const { return m_conn; }
     uint8_t myId() const { return m_myId; }
 
+    bool gameStarted() const { return m_gameStarted; }
+    uint32_t worldSeed() const { return m_worldSeed; }
+
     void sendInput(int8_t mx, int8_t my);
 
     bool popLatestSnap(game::Snap& out);
@@ -36,7 +39,8 @@ private:
 
     uint8_t m_myId{ 255 };
     uint32_t m_clientTick{ 0 };
-
+    bool m_gameStarted{ false };  // NEW
+    uint32_t m_worldSeed{ 0 };    // NEW
     bool m_hasSnap{ false };
     game::Snap m_latest{};
 };

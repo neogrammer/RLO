@@ -106,6 +106,11 @@ void GameHost::onConnStatusChanged(SteamNetConnectionStatusChangedCallback_t* in
         // Push an immediate snapshot so the client sees something right away
         sendSnap(conn, true);
 
+        // If game already started, bring this late joiner in immediately.
+        if (m_gameStarted) {
+            sendStartGame(conn);
+        }
+
         std::cout << "[Host] Client connected -> id=" << (int)slot << "\n";
         return;
     }
@@ -218,4 +223,24 @@ void GameHost::updateSim(float dt, int8_t hostMoveX, int8_t hostMoveY) {
         m_snapAccum -= snapDt;
         broadcastSnap();
     }
+}
+
+void GameHost::sendStartGame(HSteamNetConnection to) {
+    game::StartGame m{};
+    m.type = game::Type::StartGame;
+    m.worldSeed = m_worldSeed;
+
+    m_iface->SendMessageToConnection(to, &m, sizeof(m), k_nSteamNetworkingSend_Reliable, nullptr);
+}
+
+void GameHost::startGame() {
+    if (m_gameStarted) return;
+    m_gameStarted = true;
+
+    // reliable broadcast
+    for (auto c : m_clients) {
+        sendStartGame(c);
+    }
+
+    std::cout << "[Host] StartGame broadcast (seed=" << m_worldSeed << ")\n";
 }

@@ -11,6 +11,7 @@ namespace game {
         Welcome = 2,
         Input = 3,
         Snap = 4,
+        StartGame = 5, // NEW
     };
 
 #pragma pack(push, 1)
@@ -24,6 +25,12 @@ namespace game {
         Type     type;        // Welcome
         uint8_t  yourId;      // 0..2
         uint32_t worldSeed;   // for roguelike determinism later
+    };
+
+    // NEW: host -> clients (reliable)
+    struct StartGame {
+        Type     type;       // StartGame
+        uint32_t worldSeed;  // seed to use for the run
     };
 
     struct Input {

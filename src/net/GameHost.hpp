@@ -26,6 +26,9 @@ public:
     uint8_t curPlayers() const { return (uint8_t)(1 + m_clients.size()); }
     uint32_t worldSeed() const { return m_worldSeed; }
 
+    bool gameStarted() const { return m_gameStarted; }
+    void startGame(); // NEW (host button calls this)
+
     // For rendering on host
     const game::PlayerState* states() const { return m_state; }
 
@@ -34,6 +37,7 @@ private:
     void sendWelcome(HSteamNetConnection to, uint8_t assignedId);
     void sendSnap(HSteamNetConnection to, bool reliable);
     void broadcastSnap();
+    void sendStartGame(HSteamNetConnection to);
 
     uint8_t pickFreeClientSlot() const;
 
@@ -48,6 +52,7 @@ private:
     std::unordered_map<HSteamNetConnection, uint8_t> m_connToId;
 
     uint32_t m_worldSeed{ 0 };
+    bool m_gameStarted{ false }; // NEW
 
     // authoritative sim state
     game::PlayerState m_state[game::kMaxPlayers]{};

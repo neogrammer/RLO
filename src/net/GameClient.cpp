@@ -89,6 +89,7 @@ void GameClient::handleMessage(const void* data, uint32_t size) {
         game::Welcome w{};
         std::memcpy(&w, data, sizeof(w));
         m_myId = w.yourId;
+        m_worldSeed = w.worldSeed;
         std::cout << "[Client] Welcome: myId=" << (int)m_myId << " seed=" << w.worldSeed << "\n";
         return;
     }
@@ -99,11 +100,24 @@ void GameClient::handleMessage(const void* data, uint32_t size) {
         m_hasSnap = true;
         return;
     }
+    if (type == game::Type::StartGame) {
+        if (size < sizeof(game::StartGame)) return;
+
+        game::StartGame m{};
+        std::memcpy(&m, data, sizeof(m));
+
+        m_worldSeed = m.worldSeed;
+        m_gameStarted = true;
+
+        std::cout << "[Client] StartGame seed=" << m_worldSeed << "\n";
+        return;
+    }
 }
 
 void GameClient::sendInput(int8_t mx, int8_t my) {
     if (!m_connected) return;
     if (m_myId > 2) return;
+    if (!m_gameStarted) return; // NEW: wait for host StartGame
 
     game::Input in{};
     in.type = game::Type::Input;
