@@ -218,7 +218,7 @@ void GameHost::updateSim(float dt, int8_t hostMoveX, int8_t hostMoveY) {
 
     // Snapshot at 20 Hz
     m_snapAccum += dt;
-    const float snapDt = 1.f / 20.f;
+    const float snapDt = 1.f / 80.f;
     if (m_snapAccum >= snapDt) {
         m_snapAccum -= snapDt;
         broadcastSnap();
