@@ -77,6 +77,9 @@
     <ClInclude Include="src\net\NetCommon.hpp">
       <Filter>Header Files\net</Filter>
     </ClInclude>
+    <ClInclude Include="src\game\PlaceholderTileset.hpp">
+      <Filter>Header Files\game</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Font Include="assets\fonts\bubbly.ttf">

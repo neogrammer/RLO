@@ -1,4 +1,6 @@
 #include <SFML/Graphics.hpp>
+#include "game/World.hpp"
+#include "game/PlaceholderTileset.hpp"
 #include <iostream>
 #include <string>
 #include <vector>
@@ -200,6 +202,24 @@ int main(int argc, char** argv) {
         sf::RenderWindow window(sf::VideoMode({ 1280U, 720U }, 32U), "Host");
         window.setFramerateLimit(60);
 
+        World world;
+        world.generate(app.gameHost.worldSeed(), 40, 40);  // 40x40 tile map
+
+        // Create placeholder tileset if it doesn't exist
+        if (!world.loadTileset("assets/tileset.png", 64, 32)) {
+            std::cout << "[Host] Generating placeholder tileset...\n";
+            createPlaceholderTilesetFile("assets/tileset.png");
+            if (!world.loadTileset("assets/tileset.png", 64, 32)) {
+                std::cerr << "[Host] Failed to load tileset!\n";
+                return 8;
+            }
+        }
+
+        // Camera for scrolling
+        World::Camera camera;
+        camera.x = 640.f;  // Center on screen
+        camera.y = 360.f;
+
         sf::Font font;
         auto tryFont = [&](const char* p) -> bool {
             if (font.openFromFile(p)) { std::cout << "[UI] Loaded font: " << p << "\n"; return true; }
@@ -285,18 +305,44 @@ int main(int argc, char** argv) {
                 }
             }
 
+            // Camera control (arrow keys or WASD)
+            const float camSpeed = 300.f * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Left))  camera.x -= camSpeed;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Right)) camera.x += camSpeed;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Up))    camera.y -= camSpeed;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Down))  camera.y += camSpeed;
+
+            // Zoom controls
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Equal)) camera.zoom += 0.5f * dt;
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Key::Hyphen)) camera.zoom -= 0.5f * dt;
+            camera.zoom = std::clamp(camera.zoom, 0.5f, 2.0f);
+
             window.clear(sf::Color(20, 20, 26));
 
+            // Draw world FIRST (background)
+            world.render(window, camera);
+
+            // Then draw players on top
             const auto* st = app.gameHost.states();
             for (int i = 0; i < 3; ++i) {
-                circles[i].setPosition({ st[i].x, st[i].y });
+                // Convert player world position to screen position
+                // For now, treat player x/y as tile coordinates
+                int tileX = (int)(st[i].x / 64.f);
+                int tileY = (int)(st[i].y / 32.f);
+
+                sf::Vector2f screenPos = world.worldToScreen(tileX, tileY, camera);
+
+                circles[i].setPosition(screenPos);
                 window.draw(circles[i]);
             }
 
+            // UI on top
             if (hasFont) {
                 const int others = (int)app.gameHost.curPlayers() - 1;
-                hud.setString("Players connected (besides you): " + std::to_string(others) +
-                    "\nStarted: " + std::string(app.gameHost.gameStarted() ? "YES" : "NO"));
+                hud.setString("Players: " + std::to_string(others + 1) + "/3\n" +
+                    "Started: " + std::string(app.gameHost.gameStarted() ? "YES" : "NO") + "\n" +
+                    "Camera: " + std::to_string((int)camera.x) + "," + std::to_string((int)camera.y) +
+                    " Zoom: " + std::to_string(camera.zoom));
 
                 // Button visual
                 if (app.gameHost.gameStarted())
@@ -464,6 +510,23 @@ int main(int argc, char** argv) {
             };
 
 
+        World world;
+        uint32_t worldSeed = 0xC0FFEEu; // Will be synced from server via savedWorldSeed
+
+        // Load tileset (do this once at startup)
+        if (!world.loadTileset("assets/tileset.png", 64, 32)) {
+            std::cout << "[Client] Generating placeholder tileset...\n";
+            createPlaceholderTilesetFile("assets/tileset.png");
+            if (!world.loadTileset("assets/tileset.png", 64, 32)) {
+                std::cerr << "[Client] Failed to load tileset!\n";
+                return 9;
+            }
+        }
+
+        World::Camera camera;
+        camera.x = 640.f;
+        camera.y = 360.f;
+        bool worldGenerated = false;
         while (window.isOpen()) {
             while (const std::optional ev = window.pollEvent())
             {
@@ -556,6 +619,9 @@ int main(int argc, char** argv) {
             // Keep lobby updated while in lobby or waiting
             if (app.hasLobbyClient && (phase == Phase::LobbyBrowse || phase == Phase::WaitingForStart))
             {
+
+                
+
                 app.lobbyClient.pump();
 
                 listReqAccum += dt;
@@ -578,10 +644,18 @@ int main(int argc, char** argv) {
 
                 if (app.gameClient.gameStarted())
                 {
+                    std::cout << "[Client] StartGame detected -> entering InGame\n";
                     window.setTitle("RLO - Client");
                     phase = Phase::InGame;
 
-                    // Now drop lobby
+                    // NEW: Generate world now that we have the seed from server
+                    if (!worldGenerated) {
+                        world.generate(app.gameClient.worldSeed(), 40, 40);
+                        worldGenerated = true;
+                        std::cout << "[Client] World generated with seed: " << app.gameClient.worldSeed() << "\n";
+                    }
+
+                    // Drop lobby
                     app.lobbyClient.disconnect();
                     app.hasLobbyClient = false;
                 }
@@ -589,19 +663,6 @@ int main(int argc, char** argv) {
 
             if (app.hasGameClient) {
                 app.gameClient.pumpNetwork();
-            }
-
-            // transition: only when host starts
-            if (phase == Phase::WaitingForStart && app.hasGameClient && app.gameClient.gameStarted()) {
-                std::cout << "[Client] StartGame detected -> entering InGame\n";
-                window.setTitle("RLO - Client");
-                phase = Phase::InGame;
-
-                // optional: now drop lobby
-                if (app.hasLobbyClient) {
-                    app.lobbyClient.disconnect();
-                    app.hasLobbyClient = false;
-                }
             }
 
             if (phase != Phase::InGame) {

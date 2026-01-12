@@ -150,6 +150,7 @@
     <ClCompile Include="src\net\NetCommon.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\game\PlaceholderTileset.hpp" />
     <ClInclude Include="src\game\World.hpp" />
     <ClInclude Include="src\net\GameClient.hpp" />
     <ClInclude Include="src\net\GameHost.hpp" />
